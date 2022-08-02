@@ -38,8 +38,9 @@ class _HeartBTNState extends State<HeartBTN> {
 
           if (user == null) {
             GlobalMethods.errorDialog(
-                subtitle: 'No user found, Please login first',
-                context: context);
+                subtitle: 'Please login first',
+                context: context,
+                isLoginBtn: true);
             return;
           }
           if (widget.isInWishlist == false && widget.isInWishlist != null) {

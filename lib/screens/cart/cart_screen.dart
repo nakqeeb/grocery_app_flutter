@@ -1,7 +1,11 @@
+import 'dart:convert';
+import 'dart:developer';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_iconly/flutter_iconly.dart';
+import 'package:flutter_stripe/flutter_stripe.dart';
 import 'package:fluttertoast/fluttertoast.dart';
 import 'package:grocery_app/screens/cart/cart_widget.dart';
 import 'package:grocery_app/widgets/empty_screen.dart';
@@ -9,6 +13,7 @@ import 'package:grocery_app/widgets/loading_manager.dart';
 import 'package:grocery_app/widgets/text_widget.dart';
 import 'package:provider/provider.dart';
 import 'package:uuid/uuid.dart';
+import 'package:http/http.dart' as http;
 
 import '../../consts/firebase_consts.dart';
 import '../../providers/cart_provider.dart';
@@ -128,6 +133,16 @@ class _CartScreenState extends State<CartScreen> {
                 // final orderId = const Uuid().v4();
                 final productProvider =
                     Provider.of<ProductsProvider>(ctx, listen: false);
+                try {
+                  await initPayment(
+                      email: user!.email ?? '',
+                      amount: total * 100,
+                      context: ctx,
+                      color: color);
+                } catch (error) {
+                  log('An error occured $error');
+                  return; // return if the payment is failed so that the order is not saved
+                }
                 cartProvider.getCartItems.forEach((key, value) async {
                   // orderId sholud be declared inside forEach block (Not Outside)
                   final orderId = const Uuid().v4();
@@ -144,7 +159,7 @@ class _CartScreenState extends State<CartScreen> {
                         .doc(orderId)
                         .set({
                       'orderId': orderId,
-                      'userId': user!.uid,
+                      'userId': user.uid,
                       'productId': value.productId,
                       'price': (getCurrProduct.isOnSale
                               ? getCurrProduct.salePrice
@@ -197,5 +212,64 @@ class _CartScreenState extends State<CartScreen> {
         ]),
       ),
     );
+  }
+
+  Future<void> initPayment(
+      {required String email,
+      required double amount,
+      required BuildContext context,
+      required Color color}) async {
+    try {
+      // 1. Create a payment intent on the server
+      final response = await http.post(
+          Uri.parse(
+              'https://us-central1-grocery-flutter-app-5e3aa.cloudfunctions.net/stripePaymentIntentRequest'),
+          body: {
+            'email': email,
+            'amount': amount.toString(),
+          });
+
+      final jsonResponse = jsonDecode(response.body);
+      log(jsonResponse.toString());
+      if (jsonResponse['success'] == false) {
+        GlobalMethods.errorDialog(
+            subtitle: jsonResponse['error'], context: context);
+        throw jsonResponse['error'];
+      }
+      // 2. Initialize the payment sheet
+      await Stripe.instance.initPaymentSheet(
+          paymentSheetParameters: SetupPaymentSheetParameters(
+        paymentIntentClientSecret: jsonResponse['paymentIntent'],
+        merchantDisplayName: 'Grocery Flutter course',
+        customerId: jsonResponse['customer'],
+        customerEphemeralKeySecret: jsonResponse['ephemeralKey'],
+        testEnv: true,
+        merchantCountryCode: 'US',
+      ));
+      await Stripe.instance.presentPaymentSheet();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content:
+              Text('Payment is successful', style: TextStyle(color: color)),
+        ),
+      );
+    } catch (errorr) {
+      if (errorr is StripeException) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('An error occured ${errorr.error.localizedMessage}',
+                style: TextStyle(color: color)),
+          ),
+        );
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('An error occured $errorr',
+                style: TextStyle(color: color)),
+          ),
+        );
+      }
+      throw '$errorr';
+    }
   }
 }
